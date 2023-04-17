@@ -87,6 +87,7 @@ class MealPlanningEnv(gym.Env):
 
     def _calculate_reward(self):
         current_nutrition = self._calculate_current_nutrition()
-        diff_from_goal = current_nutrition - self.goal_nutrition
-        reward = -np.abs(diff_from_goal).sum()
+        # diff_from_goal = current_nutrition - self.goal_nutrition
+        # reward = -np.abs(diff_from_goal).sum()
+        reward = current_nutrition.sum()
         return reward
