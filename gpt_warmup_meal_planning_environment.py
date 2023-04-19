@@ -8,6 +8,11 @@ import re
 import sqlite3
 
 class MealPlanningEnv(gym.Env):
+    ## We want to prompt with all meals in the meal plan, and then get a rating for each meal
+
+    # then, after warmup, we want to batch for input into sets of 3 meals 
+
+    # add or subtract reward "at the end of each day" (after 3 meals)
     metadata = {'render.modes': ['human', 'json']}
 
     def __init__(self, possible_meals, meal_objects, nutrition_data, num_meals, gpt_warmup_steps=100):

@@ -73,7 +73,7 @@ class MealPlanningEnv(gym.Env):
             print(f'Nutrition History: {self.nutrition_history.round(2)}')
             print(f'Goal Nutrition: {self.goal_nutrition.round(2)}')
             print(f'Current Nutrition: {self._calculate_current_nutrition().round(2)}')
-            print(f'Reward: {self._calculate_reward().round(2)}')
+            print(f'Reward: {self._calculate_reward()}')
         else:
             pass
 
@@ -90,4 +90,5 @@ class MealPlanningEnv(gym.Env):
         # diff_from_goal = current_nutrition - self.goal_nutrition
         # reward = -np.abs(diff_from_goal).sum()
         reward = current_nutrition.sum()
+        # return -float(reward > 0)
         return reward
