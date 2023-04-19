@@ -57,11 +57,12 @@ class MealPlanningEnv(gym.Env):
         self.meal_history[self.current_step] = action
         self.nutrition_history[self.current_step, :] = nutrition
 
-        reward = self._calculate_reward()
         done = self.current_step == self.num_meals - 1
         info = {}
 
         self.current_step += 1
+
+        reward = self._calculate_reward()
 
         return self._next_observation(), reward, done, info
 
