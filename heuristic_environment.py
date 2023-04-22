@@ -183,10 +183,10 @@ class MealPlanningEnv(gym.Env):
         overall_entropy_fraction = overall_entropy / max_overall_entropy
         
         # overall reward linear combo of nutrition and composition
-        coef_nutrition = 15
-        coef_sequence_entropy = 10
-        coef_repetitions = -10
-        coef_overall_entropy = 100
+        coef_nutrition = 0
+        coef_sequence_entropy = 0
+        coef_repetitions = 0
+        coef_overall_entropy = 1000
         reward = float(
             coef_nutrition * mean_nutrition_fraction + 
             coef_sequence_entropy * mean_sequence_entropy_fraction + 
