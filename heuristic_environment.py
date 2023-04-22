@@ -43,25 +43,25 @@ class MealPlanningEnv(gym.Env):
                 high=self.num_possible_meals,
                 shape=(self.num_meals,),
                 dtype=np.int64
-            ),
-            'nutrition_history': gym.spaces.Box(
-                low=0,
-                high=np.inf,
-                shape=self.nutrition_history_shape,
-                dtype=np.float32
-            ),
-            'category_history': gym.spaces.Box(
-                low=0,
-                high=self.num_meal_categories,
-                shape=(self.num_meals,),
-                dtype=np.int64
-            ),
-            'goal_nutrition': gym.spaces.Box(
-                low=0,
-                high=np.inf,
-                shape=(len(nutrition_data.columns),),
-                dtype=np.float32
-            )
+            )#,
+            # 'nutrition_history': gym.spaces.Box(
+            #     low=0,
+            #     high=np.inf,
+            #     shape=self.nutrition_history_shape,
+            #     dtype=np.float32
+            # ),
+            # 'category_history': gym.spaces.Box(
+            #     low=0,
+            #     high=self.num_meal_categories,
+            #     shape=(self.num_meals,),
+            #     dtype=np.int64
+            # ),
+            # 'goal_nutrition': gym.spaces.Box(
+            #     low=0,
+            #     high=np.inf,
+            #     shape=(len(nutrition_data.columns),),
+            #     dtype=np.float32
+            # )
         })
     
     def _get_goal_nutrition(self):
@@ -146,9 +146,9 @@ class MealPlanningEnv(gym.Env):
     def _next_observation(self):
         obs = {
             'meal_history': self.meal_history,
-            'nutrition_history': self.nutrition_history,
-            'category_history': self.category_history,
-            'goal_nutrition': self.goal_nutrition
+            # 'nutrition_history': self.nutrition_history,
+            # 'category_history': self.category_history,
+            # 'goal_nutrition': self.goal_nutrition
         }
         return obs
 
@@ -166,31 +166,34 @@ class MealPlanningEnv(gym.Env):
         entropy_fractions = []
         for start_index in range(self.num_meals - unique_sequence_length + 1):
             end_index = start_index + unique_sequence_length
-            sequence_to_check = self.category_history[start_index:end_index]
+            sequence_to_check = self.meal_history[start_index:end_index]
             entropy_fraction = entropy_of_sequence(sequence_to_check) / max_entropy_per_sequence
             entropy_fractions.append(entropy_fraction)
         mean_sequence_entropy_fraction = np.mean(entropy_fractions)
         
         # 2. If there are more than num_allowed_in_a_row, penalize even more
         # count repetitions of each element in order
-        sequential_counts = [(category, len(list(appearances))) for category, appearances in groupby(self.category_history)]
+        sequential_counts = [(category, len(list(appearances))) for category, appearances in groupby(self.meal_history)]
         max_num_allowed_in_a_row = 1
         total_num_repetitions = np.sum([appearances > max_num_allowed_in_a_row for _, appearances in sequential_counts])
         
         # 3. Check entropy of meals overall as fraction of max possible
-        overall_entropy = entropy_of_sequence(self.category_history)
-        max_overall_entropy = entropy_of_sequence(range(self.num_meals))
-        overall_entropy_fraction = overall_entropy / max_overall_entropy
+        overall_entropy = entropy_of_sequence(self.meal_history)
+        max_overall_entropy = entropy_of_sequence(list(range(self.num_meals)))
+        overall_entropy_fraction = 1 - overall_entropy / max_overall_entropy
         
         # overall reward linear combo of nutrition and composition
-        coef_nutrition = 0
-        coef_sequence_entropy = 0
-        coef_repetitions = 0
-        coef_overall_entropy = 1000
+        coef_nutrition = 2
+        coef_sequence_entropy = 1
+        coef_repetitions = -1
+        coef_overall_entropy = 1
         reward = float(
             coef_nutrition * mean_nutrition_fraction + 
             coef_sequence_entropy * mean_sequence_entropy_fraction + 
             coef_repetitions * total_num_repetitions + 
             coef_overall_entropy * overall_entropy_fraction
         )
+        # reward = -(100 * overall_entropy_fraction)**2
+        
+        # reward = np.sum([self.possible_meals[meal_index] == self.possible_meals[0] for meal_index in self.meal_history.astype(int)])
         return reward
