@@ -3,21 +3,27 @@ import openai
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 import matplotlib.pyplot as plt
 
 import re
 from math import log, e
+from itertools import groupby
+from collections import Counter
 import os 
 
 import sqlite3
 
 
 from stable_baselines3.common.results_plotter import load_results, ts2xy
+from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common import results_plotter
 
-def entropy(labels, base=None):
+
+
+def calculate_entropy(labels, base=None):
   """ Credit: jaradc 
   Avoids scipy dependency
   https://gist.github.com/jaradc/eeddf20932c0347928d0da5a09298147
@@ -49,7 +55,7 @@ def entropy_of_sequence(input_list):
     count_data = list(Counter(input_list).values())
     
     # get entropy from counts
-    entropy = entropy(count_data)  
+    entropy = stats.entropy(count_data)  
     
     return entropy
 
@@ -101,12 +107,29 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
 
         return True
 
-def meal_sample(model, env, num_meals=21):
+def meal_sample(model, env):
     obs = env.reset()
-    for i in range(num_meals):
-        action, _ = model.predict(obs)
-        obs, _, _, _ = env.step(action)
+    done, state = False, None
+    episode_reward = 0
+    while not done:
+        action, state = model.predict(obs, state=state, deterministic=False)
+        obs, reward, done, _ = env.step(action)
+        episode_reward += reward
     env.render()
+    print(f'Epsiode reward: {episode_reward}')
+    
+def min_reward_meal_sample(model, env, min_reward):
+    episode_reward = 0
+    while episode_reward < min_reward:
+        obs = env.reset()
+        done, state = False, None
+        episode_reward = 0
+        while not done:
+            action, state = model.predict(obs, state=state, deterministic=False)
+            obs, reward, done, _ = env.step(action)
+            episode_reward += reward
+    env.render()
+    print(f'Epsiode reward: {episode_reward}')
 
 def run_with_learning_algorithm(algorithm, 
                                 env,
@@ -127,19 +150,77 @@ def run_with_learning_algorithm(algorithm,
         print('\n')
 
     model.learn(total_timesteps=num_timesteps, callback=callback)
+    
+    n_eval_episodes = 100
+    reward_means, _ = evaluate_policy(model=model, env=env, n_eval_episodes=n_eval_episodes, render=False, return_episode_rewards=True, deterministic=False)
 
     if print_before_after:
         print('Final Results')
-        meal_sample(model, env)
+        print('Example meal plan that exceeds 75th percentile reward:')
+        min_reward_meal_sample(model, env, min_reward=np.quantile(reward_means, 0.75))
         print('\n')
 
     if plot:
         # Helper from the library
         results_plotter.plot_results(
-            [log_dir], 1e5, results_plotter.X_TIMESTEPS, "TD3 LunarLander"
+            [log_dir], 1e5, results_plotter.X_TIMESTEPS, f"{type(env).__name__} - {type(algorithm).__name__}"
         )
 
-        plot_results(log_dir)
+        plot_learning_curve(log_dir, title=f'Learning Curve: {type(env).__name__} - {type(algorithm).__name__}')
+        
+        plt.figure(dpi=75)
+        plt.hist(reward_means)
+        plt.title(f'Histogram of episode reward across {n_eval_episodes} episodes')
+        plt.show()
+        
+        num_episodes = 1000
+        num_meals_to_show = 30
+        episode_rewards = []
+        meal_counter = Counter()
+        nutrition_counter = {nutrition_category: [] for nutrition_category in env.nutrition_data.columns}
+        for _ in range(num_episodes):
+            obs = env.reset()
+            done, state = False, None
+            episode_reward = 0
+            while not done:
+                action, state = model.predict(obs, state=state, deterministic=False)
+                obs, reward, done, _ = env.step(action)
+                episode_reward += reward
+            episode_rewards.append(episode_reward)
+            chosen_meals = env.possible_meals[env.meal_history.astype(int)]
+            meal_counter.update(chosen_meals)
+            
+            nutrition_totals = env.nutrition_history.sum(axis=0)
+            for i, nutrition_category in enumerate(env.nutrition_data.columns):
+                nutrition_counter[nutrition_category].append(nutrition_totals[i])
+                
+
+        _, axes = plt.subplots(nrows=2, ncols=7, figsize=(20, 5))
+        axes = axes.ravel()
+        for i, nutrition_category in enumerate(env.nutrition_data.columns):
+            axes[i].hist(nutrition_counter[nutrition_category])
+            axes[i].axvline(x=env.lower_goal_nutrition[i], color='red')
+            axes[i].axvline(x=env.upper_goal_nutrition[i], color='red')
+            axes[i].set_title(f'{nutrition_category}')
+        plt.suptitle(f'Nutrition values across {num_episodes} episodes')
+        plt.tight_layout()
+        plt.show()
+
+        meals_chosen, counts = list(zip(*sorted(meal_counter.items(), key=lambda x: x[1], reverse=False)))
+        selected_meals = meals_chosen[-num_meals_to_show:]
+        selected_counts = counts[-num_meals_to_show:]
+        y_pos = np.arange(len(selected_meals))
+        plt.figure(dpi=150)
+        plt.barh(y=y_pos, width=selected_counts)
+        plt.yticks(y_pos, selected_meals, size=5)
+        plt.title(f'Top {num_meals_to_show} meals chosen across {num_episodes} episodes')
+        plt.show()
+
+        plt.figure(dpi=75)
+        plt.hist(counts)
+        plt.title(f'Histogram of meal appearances across {num_episodes} epsiodes')
+        plt.show() 
+    
     return model, env
 
 def moving_average(values, window):
@@ -153,9 +234,9 @@ def moving_average(values, window):
     return np.convolve(values, weights, "valid")
 
 
-def plot_results(log_folder, title="Learning Curve"):
+def plot_learning_curve(log_folder, title="Learning Curve"):
     """
-    plot the results
+    plot the learning curve
 
     :param log_folder: (str) the save location of the results to plot
     :param title: (str) the title of the task to plot
@@ -171,6 +252,7 @@ def plot_results(log_folder, title="Learning Curve"):
     plt.ylabel("Rewards")
     plt.title(title + " Smoothed")
     plt.show()
+
 
 class MealPlanningEnv(gym.Env):
     metadata = {'render.modes': ['human', 'json']}
@@ -227,62 +309,29 @@ class MealPlanningEnv(gym.Env):
         })
     
     def _get_lowerbound_goal_nutrition(self):
-        # this is the dietkit guideline for a sequence of 19 meals:
-        # energy in [1260, 1540]
-        # protein >= 20
-        # fat in [15, 30]
-        # carbs in [55, 65]
-        # total dietary in [11, 20]
-        # calcium in [500, 2500]
-        # iron in [5, 40]
-        # sodium < 1600
-        # vitamin a in [230, 750]
-        # vitamin b1 thiamine > 0.4
-        # vitamine b2 riboflavine > 0.5
-        # vitamin c in [35, 510]
-        # linoleic acid in [4.6, 9.1]
-        # alpha-linolenic acid in [0.6, 1.17]
-        
-        # set goal at min of each range
-        goal_nutrition_lowerbound = np.array([
-            1260, 
-            20,
-            15,
-            55,
-            11,
-            500,
-            5,
-            1600 / 5,
-            230,
-            0.4,
-            0.5,
-            35,
-            4.6,
-            0.6
-        ])
-        
-        return goal_nutrition_lowerbound * self.num_meals / 19
+        # # get minimum and maximum nutrition range from the sample of 500 "really good" dietkit diets
+        # # we'll set minimum to be 90% of observed minimum and maximum to be 110% of observed maximum
+        # # dividing by plan_length to get values for one meal
+        # sample_ingredients = load_ingredient(sample_language = 'eng')
+        # sample_menus = load_menu(ingredients = sample_ingredients, sample_language = 'eng')
+        # sample_diets = load_diet(menus = sample_menus, num_loads = 500, sample_language = 'eng', sample_name = 'ML')
+        # nutrition_range_df = pd.DataFrame([sample_diets.nutrition[i] for i in range(500)]).describe() / sample_diets.plan_length
+        # display(nutrition_range_df)
+        # nutrition_lower_bound = nutrition_range_df.loc['min', :] * 0.9
+        # print(f'>> Lower bound:\n>> {nutrition_lower_bound.values.round(3).tolist()}')
+        # nutrition_upper_bound = nutrition_range_df.loc['max', :] * 1.1
+        # print(f'>> Upper bound:\n>> {nutrition_upper_bound.values.round(3).tolist()}')
+        # # >> Lower bound:
+        # # >> [44.007, 1.828, 0.527, 6.922, 0.262, 9.591, 0.295, 48.556, 6.635, 0.028, 0.034, 0.63, 160.102, 17.41]
+        # # >> Upper bound:
+        # # >> [100.36, 4.721, 3.396, 15.128, 1.481, 64.853, 0.952, 166.827, 67.558, 0.168, 0.161, 10.887, 765.701, 215.002]
+
+        single_meal_lowerbound = np.array([44.007, 1.828, 0.527, 6.922, 0.262, 9.591, 0.295, 48.556, 6.635, 0.028, 0.034, 0.63, 160.102, 17.41])
+        return single_meal_lowerbound * self.num_meals
     
     def _get_upperbound_goal_nutrition(self):
-        goal_nutrition_upperbound = np.array([
-            1540, 
-            20 * 5,
-            30,
-            65,
-            20,
-            2500,
-            40,
-            1600,
-            750,
-            0.4 * 10,
-            0.5 * 10,
-            510,
-            9.1,
-            1.17
-        ])
-        
-        return goal_nutrition_upperbound * self.num_meals / 19
-        
+        single_meal_upperbound = np.array([100.36, 4.721, 3.396, 15.128, 1.481, 64.853, 0.952, 166.827, 67.558, 0.168, 0.161, 10.887, 765.701, 215.002])
+        return single_meal_upperbound * self.num_meals
     
     def _calculate_current_nutrition(self):
         return self.nutrition_history[0:self.current_step, :].sum(axis=0)
