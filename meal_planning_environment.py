@@ -24,17 +24,6 @@ from stable_baselines3.common import results_plotter
 
 
 
-def calculate_entropy(labels, base=None):
-  """ Credit: jaradc 
-  Avoids scipy dependency
-  https://gist.github.com/jaradc/eeddf20932c0347928d0da5a09298147
-  """
-
-  _,counts = np.unique(labels, return_counts=True)
-  norm_counts = counts / counts.sum()
-  base = e if base is None else base
-  return -(norm_counts * np.log(norm_counts)/np.log(base)).sum()
-
 def entropy_of_sequence(input_list):
     # get counts
     count_data = list(Counter(input_list).values())
@@ -259,6 +248,9 @@ class MealPlanningEnv(gym.Env):
         self.current_step = None
         self.action_space = gym.spaces.Discrete(self.num_possible_meals)
         
+        # initial reward weights that can also be customized using self.set_reward_weights()
+        self.set_reward_weights()
+        
         self.nutrition_history_shape = (self.num_meals, len(self.nutrition_data.columns))
         self.observation_space = gym.spaces.Dict({
             'meal_history': gym.spaces.Box(
@@ -292,6 +284,22 @@ class MealPlanningEnv(gym.Env):
                 dtype=np.float32
             )
         })
+        
+    def set_reward_weights(
+            self, 
+            coef_nutrition_lower=1,
+            coef_nutrition_upper=-1,
+            coef_sequence_entropy=1,
+            coef_repetitions=-1,
+            coef_overall_entropy=1
+        ):
+        self.reward_weights = dict(
+            coef_nutrition_lower=coef_nutrition_lower,
+            coef_nutrition_upper=coef_nutrition_upper,
+            coef_sequence_entropy=coef_sequence_entropy,
+            coef_repetitions=coef_repetitions,
+            coef_overall_entropy=coef_overall_entropy
+        )
     
     def _get_lowerbound_goal_nutrition(self):
         # # get minimum and maximum nutrition range from the sample of 500 "really good" dietkit diets
@@ -415,17 +423,13 @@ class MealPlanningEnv(gym.Env):
         overall_entropy_fraction = 1 - overall_entropy / max_overall_entropy
         
         # overall reward linear combo of nutrition and composition
-        coef_nutrition_lower = 1
-        coef_nutrition_upper = -1
-        coef_sequence_entropy = 1
-        coef_repetitions = -1
-        coef_overall_entropy = 1
+        
         reward = float(
-            coef_nutrition_lower * lower_nutrition_score + 
-            coef_nutrition_upper * upper_nutrition_penalty +
-            coef_sequence_entropy * mean_sequence_entropy_fraction + 
-            coef_repetitions * total_num_repetitions + 
-            coef_overall_entropy * overall_entropy_fraction
+            self.reward_weights['coef_nutrition_lower'] * lower_nutrition_score + 
+            self.reward_weights['coef_nutrition_upper'] * upper_nutrition_penalty +
+            self.reward_weights['coef_sequence_entropy'] * mean_sequence_entropy_fraction + 
+            self.reward_weights['coef_repetitions'] * total_num_repetitions + 
+            self.reward_weights['coef_overall_entropy'] * overall_entropy_fraction
         ) / self.num_meals
         
         return reward
