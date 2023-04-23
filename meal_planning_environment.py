@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import re
 from math import log, e
 import os 
+from collections import groupby
 
 import sqlite3
 
@@ -263,29 +264,30 @@ class MealPlanningEnv(gym.Env):
         
         return goal_nutrition_lowerbound * self.num_meals / 19
     
-    def _get_upperbound_goal_nutrition(self):
-        goal_nutrition_upperbound = np.array([
-            1540, 
-            20 * 5,
-            30,
-            65,
-            20,
-            2500,
-            40,
-            1600,
-            750,
-            0.4 * 10,
-            0.5 * 10,
-            510,
-            9.1,
-            1.17
-        ])
-        
-        return goal_nutrition_upperbound * self.num_meals / 19
-        
+    def _get_lowerbound_goal_nutrition(self):
+        # # get minimum and maximum nutrition range from the sample of 500 "really good" dietkit diets
+        # # we'll set minimum to be 90% of observed minimum and maximum to be 110% of observed maximum
+        # # dividing by plan_length to get values for one meal
+        # sample_ingredients = load_ingredient(sample_language = 'eng')
+        # sample_menus = load_menu(ingredients = sample_ingredients, sample_language = 'eng')
+        # sample_diets = load_diet(menus = sample_menus, num_loads = 500, sample_language = 'eng', sample_name = 'ML')
+        # nutrition_range_df = pd.DataFrame([sample_diets.nutrition[i] for i in range(500)]).describe() / sample_diets.plan_length
+        # display(nutrition_range_df)
+        # nutrition_lower_bound = nutrition_range_df.loc['min', :] * 0.9
+        # print(f'>> Lower bound:\n>> {nutrition_lower_bound.values.round(3).tolist()}')
+        # nutrition_upper_bound = nutrition_range_df.loc['max', :] * 1.1
+        # print(f'>> Upper bound:\n>> {nutrition_upper_bound.values.round(3).tolist()}')
+        # # >> Lower bound:
+        # # >> [44.007, 1.828, 0.527, 6.922, 0.262, 9.591, 0.295, 48.556, 6.635, 0.028, 0.034, 0.63, 160.102, 17.41]
+        # # >> Upper bound:
+        # # >> [100.36, 4.721, 3.396, 15.128, 1.481, 64.853, 0.952, 166.827, 67.558, 0.168, 0.161, 10.887, 765.701, 215.002]
+
+        single_meal_lowerbound = np.array([44.007, 1.828, 0.527, 6.922, 0.262, 9.591, 0.295, 48.556, 6.635, 0.028, 0.034, 0.63, 160.102, 17.41])
+        return single_meal_lowerbound * self.num_meals
     
-    def _calculate_current_nutrition(self):
-        return self.nutrition_history[0:self.current_step, :].sum(axis=0)
+    def _get_upperbound_goal_nutrition(self):
+        single_meal_upperbound = np.array([100.36, 4.721, 3.396, 15.128, 1.481, 64.853, 0.952, 166.827, 67.558, 0.168, 0.161, 10.887, 765.701, 215.002])
+        return single_meal_upperbound * self.num_meals
 
     def reset(self):
         self.current_step = 0
