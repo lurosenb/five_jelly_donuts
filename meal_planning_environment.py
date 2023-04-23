@@ -232,6 +232,7 @@ def plot_learning_curve(log_folder, title="Learning Curve"):
     plt.plot(x, y)
     plt.xlabel("Number of Timesteps")
     plt.ylabel("Rewards")
+    plt.title(title)
     plt.savefig(log_folder + '/learning_curve.png', bbox_inches='tight')
     plt.show()
 
@@ -239,7 +240,7 @@ def plot_learning_curve(log_folder, title="Learning Curve"):
 class MealPlanningEnv(gym.Env):
     metadata = {'render.modes': ['human', 'json']}
 
-    def __init__(self, possible_meals, meal_categories, nutrition_data, num_meals):
+    def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
         super(MealPlanningEnv, self).__init__()
 
         self.possible_meals = possible_meals
@@ -256,6 +257,8 @@ class MealPlanningEnv(gym.Env):
         self.current_step = None
         self.action_space = gym.spaces.Discrete(self.num_possible_meals)
         
+        self.carbon_data = carbon_data
+        
         # initial reward weights that can also be customized using self.set_reward_weights()
         self.set_reward_weights()
         
@@ -271,6 +274,12 @@ class MealPlanningEnv(gym.Env):
                 low=0,
                 high=np.inf,
                 shape=self.nutrition_history_shape,
+                dtype=np.float64
+            ),
+            'carbon_history': gym.spaces.Box(
+                low=-10,
+                high=10,
+                shape=(self.num_meals,),
                 dtype=np.float64
             ),
             'category_history': gym.spaces.Box(
@@ -299,14 +308,16 @@ class MealPlanningEnv(gym.Env):
             coef_nutrition_upper=-1,
             coef_sequence_entropy=1,
             coef_repetitions=-1,
-            coef_overall_entropy=1
+            coef_overall_entropy=1,
+            coef_carbon=1
         ):
         self.reward_weights = dict(
             coef_nutrition_lower=coef_nutrition_lower,
             coef_nutrition_upper=coef_nutrition_upper,
             coef_sequence_entropy=coef_sequence_entropy,
             coef_repetitions=coef_repetitions,
-            coef_overall_entropy=coef_overall_entropy
+            coef_overall_entropy=coef_overall_entropy,
+            coef_carbon=coef_carbon
         )
     
     def _get_lowerbound_goal_nutrition(self):
@@ -344,6 +355,8 @@ class MealPlanningEnv(gym.Env):
         self.nutrition_history = np.zeros(self.nutrition_history_shape)
         # set all categories to the 'empty' category
         self.category_history = np.zeros(self.num_meals).astype(int)
+        # set carbon impact to zero since no meals chosen
+        self.carbon_history = np.zeros(self.num_meals)
         self.lower_goal_nutrition = self._get_lowerbound_goal_nutrition()
         self.upper_goal_nutrition = self._get_upperbound_goal_nutrition()
         return self._next_observation()
@@ -356,6 +369,7 @@ class MealPlanningEnv(gym.Env):
         self.meal_history[self.current_step] = action
         self.nutrition_history[self.current_step, :] = nutrition
         self.category_history[self.current_step] = self.unique_meal_categories.tolist().index(chosen_meal_category)
+        self.carbon_history[self.current_step] = self.carbon_data[chosen_meal]
 
         done = self.current_step == self.num_meals - 1
         info = {}
@@ -373,6 +387,7 @@ class MealPlanningEnv(gym.Env):
             print(f'Chosen Meal Category: {self.meal_categories[self.meal_history[self.current_step - 1].astype(int)]}')
             print(f'Meal History: {self.possible_meals[self.meal_history.astype(int)]}')
             print(f'Category History: {self.unique_meal_categories[self.category_history.astype(int)]}')
+            print(f'Carbon History: {self.carbon_history}')
             print(f'Reward: {self._calculate_reward()}')
         else:
             pass
@@ -381,6 +396,7 @@ class MealPlanningEnv(gym.Env):
         obs = {
             'meal_history': self.meal_history,
             'nutrition_history': self.nutrition_history,
+            'carbon_history': self.carbon_history,
             'category_history': self.category_history,
             'lower_goal_nutrition': self.lower_goal_nutrition,
             'upper_goal_nutrition': self.upper_goal_nutrition
@@ -430,21 +446,24 @@ class MealPlanningEnv(gym.Env):
         max_overall_entropy = entropy_of_sequence(list(range(self.num_meals)))
         overall_entropy_fraction = 1 - overall_entropy / max_overall_entropy
         
-        # overall reward linear combo of nutrition and composition
+        # carbon impact on [-1, 1] scale
+        carbon_impact = np.mean(self.carbon_history) / 10
         
+        # overall reward linear combo of nutrition and composition and carbon impact
         reward = float(
             self.reward_weights['coef_nutrition_lower'] * lower_nutrition_score + 
             self.reward_weights['coef_nutrition_upper'] * upper_nutrition_penalty +
             self.reward_weights['coef_sequence_entropy'] * mean_sequence_entropy_fraction + 
-            self.reward_weights['coef_repetitions'] * total_num_repetitions + 
-            self.reward_weights['coef_overall_entropy'] * overall_entropy_fraction
+            self.reward_weights['coef_repetitions'] * reptition_penalty + 
+            self.reward_weights['coef_overall_entropy'] * overall_entropy_fraction +
+            self.reward_weights['coef_carbon'] * carbon_impact
         ) / self.num_meals
         
         return reward
     
 class MaxNutritionEnv(MealPlanningEnv):
-    def __init__(self, possible_meals, meal_categories, nutrition_data, num_meals):
-        super(MaxNutritionEnv, self).__init__(possible_meals, meal_categories, nutrition_data, num_meals)
+    def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
+        super(MaxNutritionEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
 
     def _calculate_reward(self):
         current_nutrition = self._calculate_current_nutrition()
@@ -452,12 +471,12 @@ class MaxNutritionEnv(MealPlanningEnv):
         return reward
 
 class HeuristicEnv(MealPlanningEnv):
-    def __init__(self, possible_meals, meal_categories, nutrition_data, num_meals):
-        super(HeuristicEnv, self).__init__(possible_meals, meal_categories, nutrition_data, num_meals)
+    def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
+        super(HeuristicEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
     
 class GPTOnlyEnv(MealPlanningEnv):
-    def __init__(self, possible_meals, meal_categories, nutrition_data, num_meals):
-        super(GPTOnlyEnv, self).__init__(possible_meals, meal_categories, nutrition_data, num_meals)
+    def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
+        super(GPTOnlyEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
         # Accrue meal text for prompting
         self.meal_text_history = ""
 
@@ -591,8 +610,8 @@ class GPTOnlyEnv(MealPlanningEnv):
             return 0.0
         
 class RLHFEnv(GPTOnlyEnv):
-    def __init__(self, possible_meals, meal_categories, nutrition_data, num_meals):
-        super(RLHFEnv, self).__init__(possible_meals, meal_categories, nutrition_data, num_meals)
+    def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
+        super(RLHFEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
 
     
     def _calculate_reward(self, chosen_meal, done=False):
