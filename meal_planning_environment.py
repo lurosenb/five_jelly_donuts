@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import re
 from math import log, e
 import os 
+from collections import Counter
 
 import sqlite3
 
