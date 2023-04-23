@@ -113,6 +113,8 @@ def run_with_learning_algorithm(algorithm,
                                 seed=0,
                                 print_before_after=True,
                                 plot=True):
+    env_name = type(env).__name__
+    algorithm_name = algorithm.__name__
 
     env = Monitor(env, log_dir)
     callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
@@ -137,10 +139,10 @@ def run_with_learning_algorithm(algorithm,
     if plot:
         # Helper from the library
         results_plotter.plot_results(
-            [log_dir], 1e5, results_plotter.X_TIMESTEPS, f"{type(env).__name__} - {type(algorithm).__name__}"
+            [log_dir], 1e5, results_plotter.X_TIMESTEPS, f"{env_name} - {algorithm_name}"
         )
 
-        plot_learning_curve(log_dir, title=f'Learning Curve: {type(env).__name__} - {type(algorithm).__name__}')
+        plot_learning_curve(log_dir, title=f'Learning Curve: {env_name} - {algorithm_name}')
         
         plt.figure(dpi=75)
         plt.hist(reward_means)
