@@ -56,7 +56,13 @@ class MealPlanningEnv(gym.Env):
                 shape=(self.num_meals,),
                 dtype=np.int64
             ),
-            'goal_nutrition': gym.spaces.Box(
+            'lower_goal_nutrition': gym.spaces.Box(
+                low=0,
+                high=np.inf,
+                shape=(len(nutrition_data.columns),),
+                dtype=np.float32
+            ),
+            'upper_goal_nutrition': gym.spaces.Box(
                 low=0,
                 high=np.inf,
                 shape=(len(nutrition_data.columns),),
@@ -64,7 +70,7 @@ class MealPlanningEnv(gym.Env):
             )
         })
     
-    def _get_goal_nutrition(self):
+    def _get_lowerbound_goal_nutrition(self):
         # this is the dietkit guideline for a sequence of 19 meals:
         # energy in [1260, 1540]
         # protein >= 20
@@ -82,24 +88,45 @@ class MealPlanningEnv(gym.Env):
         # alpha-linolenic acid in [0.6, 1.17]
         
         # set goal at min of each range
-        goal_nutrition_for_19_meals = np.array([
+        goal_nutrition_lowerbound = np.array([
             1260, 
             20,
             15,
             55,
-            16,
-            230,
-            35,
-            0.4,
-            0.5,
+            11,
             500,
             5,
-            1600,
+            1600 / 5,
+            230,
+            0.4,
+            0.5,
+            35,
             4.6,
             0.6
         ])
         
-        return goal_nutrition_for_19_meals * self.num_meals / 19
+        return goal_nutrition_lowerbound * self.num_meals / 19
+    
+    def _get_upperbound_goal_nutrition(self):
+        goal_nutrition_upperbound = np.array([
+            1540, 
+            20 * 5,
+            30,
+            65,
+            20,
+            2500,
+            40,
+            1600,
+            750,
+            0.4 * 10,
+            0.5 * 10,
+            510,
+            9.1,
+            1.17
+        ])
+        
+        return goal_nutrition_upperbound * self.num_meals / 19
+        
     
     def _calculate_current_nutrition(self):
         return self.nutrition_history[0:self.current_step, :].sum(axis=0)
@@ -111,7 +138,8 @@ class MealPlanningEnv(gym.Env):
         self.nutrition_history = np.zeros(self.nutrition_history_shape)
         # set all categories to the 'empty' category
         self.category_history = np.zeros(self.num_meals)
-        self.goal_nutrition = self._get_goal_nutrition()
+        self.lower_goal_nutrition = self._get_lowerbound_goal_nutrition()
+        self.upper_goal_nutrition = self._get_upperbound_goal_nutrition()
         return self._next_observation()
 
     def step(self, action):
@@ -148,54 +176,66 @@ class MealPlanningEnv(gym.Env):
             'meal_history': self.meal_history,
             'nutrition_history': self.nutrition_history,
             'category_history': self.category_history,
-            'goal_nutrition': self.goal_nutrition
+            'lower_goal_nutrition': self.lower_goal_nutrition,
+            'upper_goal_nutrition': self.upper_goal_nutrition
         }
         return obs
 
     def _calculate_reward(self):
         # take current percentage of nutrition met, treating each category equally, on [0, 1] scale
+        
+        # reaches 1 when at minimum nutrition
+        # otherwise mean fraction of current nutrition requirement
         current_nutrition = self._calculate_current_nutrition()
-        nutrition_fractions = np.divide(current_nutrition, self.goal_nutrition)
-        nutrition_fractions = np.array([min(fraction, 1) for fraction in nutrition_fractions])
-        mean_nutrition_fraction = nutrition_fractions.mean()
+        lower_nutrition_fractions = np.divide(current_nutrition, self.lower_goal_nutrition)
+        lower_nutrition_fractions = np.array([min(fraction, 1) for fraction in lower_nutrition_fractions])
+        lower_nutrition_score = lower_nutrition_fractions.mean()
+        
+        # reaches 1 when all categories above maximum nutrition
+        # otherwise fraction of categories that are above maximum
+        upper_nutrition_fractions = np.divide(current_nutrition, self.upper_goal_nutrition)
+        upper_nutrition_fractions = np.array([fraction > 1 for fraction in upper_nutrition_fractions])
+        upper_nutrition_penalty = upper_nutrition_fractions.mean()
+        
         
         # calculate 3 measures of current compositional diversity, all on [0, 1] scale
-        # 1. if there are category repetitions in a sequence of length unique_sequence_length, penalize
+        # 1. if there are meals repetitions in a sequence of length unique_sequence_length, penalize
         unique_sequence_length = 3
         max_entropy_per_sequence = entropy_of_sequence(range(unique_sequence_length))
         entropy_fractions = []
         for start_index in range(self.num_meals - unique_sequence_length + 1):
             end_index = start_index + unique_sequence_length
-            sequence_to_check = self.category_history[start_index:end_index]
+            sequence_to_check = self.meal_history[start_index:end_index]
             entropy_fraction = entropy_of_sequence(sequence_to_check) / max_entropy_per_sequence
             entropy_fractions.append(entropy_fraction)
         mean_sequence_entropy_fraction = np.mean(entropy_fractions)
         
         # 2. If there are more than num_allowed_in_a_row, penalize even more
         # count repetitions of each element in order
-        sequential_counts = [(category, len(list(appearances))) for category, appearances in groupby(self.category_history)]
+        # reaches 1 when everything is repeated (so to speak)
+        # otherwise fraction of total possible # repetitions
+        sequential_counts = [(meal, len(list(appearances))) for meal, appearances in groupby(self.meal_history)]
         max_num_allowed_in_a_row = 1
         total_num_repetitions = np.sum([appearances > max_num_allowed_in_a_row for _, appearances in sequential_counts])
+        reptition_penalty = total_num_repetitions / self.num_meals
         
-        # 3. Check entropy of meals overall as fraction of max possible
+        # 3. Check entropy of meals overall as fraction of max possible, on [0, 1] scale
         overall_entropy = entropy_of_sequence(self.meal_history)
         max_overall_entropy = entropy_of_sequence(list(range(self.num_meals)))
         overall_entropy_fraction = 1 - overall_entropy / max_overall_entropy
         
         # overall reward linear combo of nutrition and composition
-        coef_nutrition = 2 / self.num_meals
-        coef_sequence_entropy = 3 / self.num_meals
-        coef_repetitions = -1 / self.num_meals
-        coef_overall_entropy = 1 / self.num_meals
+        coef_nutrition_lower = 1
+        coef_nutrition_upper = -1
+        coef_sequence_entropy = 1
+        coef_repetitions = -1
+        coef_overall_entropy = 1
         reward = float(
-            coef_nutrition * mean_nutrition_fraction + 
+            coef_nutrition_lower * lower_nutrition_score + 
+            coef_nutrition_upper * upper_nutrition_penalty +
             coef_sequence_entropy * mean_sequence_entropy_fraction + 
             coef_repetitions * total_num_repetitions + 
             coef_overall_entropy * overall_entropy_fraction
-        )
-        # reward = -(100 * overall_entropy_fraction)**2
+        ) / self.num_meals
         
-        # TODO: each day hit different categories, then penalize overall across meals not categories
-        
-        # reward = np.sum([self.possible_meals[meal_index] == self.possible_meals[0] for meal_index in self.meal_history.astype(int)])
         return reward
