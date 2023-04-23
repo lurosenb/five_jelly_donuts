@@ -141,12 +141,15 @@ def run_with_learning_algorithm(algorithm,
         results_plotter.plot_results(
             [log_dir], 1e5, results_plotter.X_TIMESTEPS, f"{env_name} - {algorithm_name}"
         )
+        
+        plt.savefig(log_dir + '/rewards_per_episode.png', bbox_inches='tight')
 
-        plot_learning_curve(log_dir, title=f'Learning Curve: {env_name} - {algorithm_name}')
+        plot_learning_curve(log_dir, title=f'Learning Curve Smoothed: {env_name} - {algorithm_name}')
         
         plt.figure(dpi=75)
         plt.hist(reward_means)
         plt.title(f'Histogram of episode reward across {n_eval_episodes} episodes')
+        plt.savefig(log_dir + '/reward_histogram.png', bbox_inches='tight')
         plt.show()
         
         num_episodes = 1000
@@ -180,6 +183,7 @@ def run_with_learning_algorithm(algorithm,
             axes[i].set_title(f'{nutrition_category}')
         plt.suptitle(f'Nutrition values across {num_episodes} episodes')
         plt.tight_layout()
+        plt.savefig(log_dir + '/nutrition_values.png', bbox_inches='tight')
         plt.show()
 
         meals_chosen, counts = list(zip(*sorted(meal_counter.items(), key=lambda x: x[1], reverse=False)))
@@ -190,11 +194,13 @@ def run_with_learning_algorithm(algorithm,
         plt.barh(y=y_pos, width=selected_counts)
         plt.yticks(y_pos, selected_meals, size=5)
         plt.title(f'Top {num_meals_to_show} meals chosen across {num_episodes} episodes')
+        plt.savefig(log_dir + '/top_meals.png', bbox_inches='tight')
         plt.show()
 
         plt.figure(dpi=75)
         plt.hist(counts)
         plt.title(f'Histogram of meal appearances across {num_episodes} epsiodes')
+        plt.savefig(log_dir + '/meal_appearances.png', bbox_inches='tight')
         plt.show() 
     
     return model, env
@@ -226,7 +232,7 @@ def plot_learning_curve(log_folder, title="Learning Curve"):
     plt.plot(x, y)
     plt.xlabel("Number of Timesteps")
     plt.ylabel("Rewards")
-    plt.title(title + " Smoothed")
+    plt.savefig(log_folder + '/learning_curve.png', bbox_inches='tight')
     plt.show()
 
 
@@ -265,7 +271,7 @@ class MealPlanningEnv(gym.Env):
                 low=0,
                 high=np.inf,
                 shape=self.nutrition_history_shape,
-                dtype=np.float32
+                dtype=np.float64
             ),
             'category_history': gym.spaces.Box(
                 low=0,
@@ -277,13 +283,13 @@ class MealPlanningEnv(gym.Env):
                 low=0,
                 high=np.inf,
                 shape=(len(nutrition_data.columns),),
-                dtype=np.float32
+                dtype=np.float64
             ),
             'upper_goal_nutrition': gym.spaces.Box(
                 low=0,
                 high=np.inf,
                 shape=(len(nutrition_data.columns),),
-                dtype=np.float32
+                dtype=np.float64
             )
         })
         
@@ -334,10 +340,10 @@ class MealPlanningEnv(gym.Env):
     def reset(self):
         self.current_step = 0
         # set all meals to the 'empty' meal
-        self.meal_history = np.zeros(self.num_meals) + self.num_possible_meals - 1
+        self.meal_history = (np.zeros(self.num_meals) + self.num_possible_meals - 1).astype(int)
         self.nutrition_history = np.zeros(self.nutrition_history_shape)
         # set all categories to the 'empty' category
-        self.category_history = np.zeros(self.num_meals)
+        self.category_history = np.zeros(self.num_meals).astype(int)
         self.lower_goal_nutrition = self._get_lowerbound_goal_nutrition()
         self.upper_goal_nutrition = self._get_upperbound_goal_nutrition()
         return self._next_observation()
