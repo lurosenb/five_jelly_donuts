@@ -136,13 +136,17 @@ def run_with_learning_algorithm(algorithm,
                                 num_meals=21,
                                 seed=0,
                                 print_before_after=True,
-                                plot=True):
+                                plot=True,
+                                algorithm_kwargs=None):
     env_name = type(env).__name__
     algorithm_name = algorithm.__name__
 
     env = Monitor(env, log_dir)
     callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
-    model = algorithm('MultiInputPolicy', env, verbose=1, seed=seed)
+    if algorithm_kwargs is not None:
+        model = algorithm('MultiInputPolicy', env, verbose=1, seed=seed, **algorithm_kwargs)
+    else:
+        model = algorithm('MultiInputPolicy', env, verbose=1, seed=seed)
     
     if print_before_after:
         print('Initial Results')
