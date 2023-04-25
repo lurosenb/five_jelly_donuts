@@ -13,9 +13,14 @@ from itertools import groupby
 from collections import Counter
 import os 
 from collections import Counter
-
+import time
 import sqlite3
 
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 from stable_baselines3.common.evaluation import evaluate_policy
@@ -24,8 +29,20 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common import results_plotter
 
 
-
 def entropy_of_sequence(input_list):
+    """
+    Calculates the Shannon entropy of a given input list.
+
+    Parameters
+    ----------
+    input_list : list
+        List of items to calculate entropy of.
+    
+    Returns
+    -------
+    entropy : float
+    
+    """
     # get counts
     count_data = list(Counter(input_list).values())
     
@@ -36,6 +53,24 @@ def entropy_of_sequence(input_list):
 
 
 def load_data():
+    """
+    Load dietkit data and carbon impact data.
+
+    Parameters
+    ----------
+
+    Returns
+    -------
+    possible_meals : numpy.ndarray
+        Array of possible meals.
+    meal_categories : numpy.ndarray
+        Array of meal categories.
+    nutrition_data : pandas.DataFrame
+        DataFrame of nutrition data for each meal.
+    carbon_data : dict
+        Dictionary of carbon impact data for each meal.
+
+    """
     # load possible_meals, meal_categories, nutrition_data
     all_ingredients = load_ingredient(sample_language = 'eng')
     meal_dict = load_menu(ingredients = all_ingredients, sample_language = 'eng')
@@ -104,6 +139,21 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
         return True
 
 def meal_sample(model, env):
+    """
+    Runs a single episode of the model in the environment and prints the episode reward.
+
+    Parameters
+    ----------
+    model : stable_baselines3.PPO
+        Trained model.
+    env : gym.Env
+        Environment to run the model in.
+
+    Returns
+    -------
+    None.
+
+    """
     obs = env.reset()
     done, state = False, None
     episode_reward = 0
@@ -115,6 +165,25 @@ def meal_sample(model, env):
     print(f'Epsiode reward: {episode_reward}')
     
 def min_reward_meal_sample(model, env, min_reward, give_up_after=1000):
+    """
+    Prints the episode reward of the model in the environment until the reward is greater than min_reward.
+
+    Parameters
+    ----------
+    model : stable_baselines3.PPO
+        Trained model.
+    env : gym.Env
+        Environment to run the model in.
+    min_reward : float
+        Minimum reward to achieve.
+    give_up_after : int, optional
+        Number of attempts to achieve min_reward before giving up. The default is 1000.
+
+    Returns
+    -------
+    None.
+
+    """
     episode_reward = 0
     attempts = 0
     while episode_reward < min_reward and attempts < give_up_after:
@@ -138,6 +207,38 @@ def run_with_learning_algorithm(algorithm,
                                 print_before_after=True,
                                 plot=True,
                                 algorithm_kwargs=None):
+    """
+    Runs the given learning algorithm on the given environment for the given number of timesteps.
+
+    Parameters
+    ----------
+    algorithm : stable_baselines3.PPO
+        Learning algorithm to use.
+    env : gym.Env
+        Environment to run the algorithm in.
+    num_timesteps : int
+        Number of timesteps to run the algorithm for.
+    log_dir : str
+        Directory to save the results in.
+    num_meals : int, optional
+        Number of meals to sample from the environment. The default is 21.
+    seed : int, optional
+        Random seed to use. The default is 0.
+    print_before_after : bool, optional
+        Whether to print the results before and after training. The default is True.
+    plot : bool, optional
+        Whether to plot the results. The default is True.
+    algorithm_kwargs : dict, optional
+        Keyword arguments to pass to the algorithm. The default is None.
+
+    Returns
+    -------
+    model: stable_baselines3.PPO
+        Trained model.
+    env: gym.Env
+        Environment used for training.
+
+    """
     env_name = type(env).__name__
     algorithm_name = algorithm.__name__
 
@@ -264,11 +365,46 @@ def plot_learning_curve(log_folder, title="Learning Curve"):
     plt.savefig(log_folder + '/learning_curve.png', bbox_inches='tight')
     plt.show()
 
+def plot_learning_multiple_agents(log_folders, title="Comparing Learning Curves of Multiple Agents"):
+    """
+    plot the learning curve
+
+    :param log_folder: (str) the save location of the results to plot
+    :param title: (str) the title of the task to plot
+    """
+    fig = plt.figure(title)
+    all_models = ""
+    for model, log in log_folders:
+        x, y = ts2xy(load_results(log), "timesteps")
+        y = moving_average(y, window=50)
+        # Truncate x
+        x = x[len(x) - len(y) :]
+        plt.plot(x, y, label=model)
+        all_models += model + ", "
+
+    plt.xlabel("Number of Timesteps")
+    plt.ylabel("Rewards")
+    plt.title(title)
+    plt.legend(loc="best")
+    plt.savefig(f"Comparing {all_models}{time.strftime('%Y%m%d-%H%M%S')}.png", bbox_inches='tight')
+    plt.show()
+
 
 class MealPlanningEnv(gym.Env):
+    """
+    Custom Meal Planning Environment for gym
+    """
     metadata = {'render.modes': ['human', 'json']}
 
     def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
+        """
+        Initialize the environment
+        :param possible_meals: (numpy array) array of possible meals to choose from
+        :param meal_categories: (numpy array) array of meal categories for each meal
+        :param nutrition_data: (pandas dataframe) dataframe of nutrition data for each meal
+        :param carbon_data: (pandas dataframe) dataframe of carbon data for each meal
+        :param num_meals: (int) number of meals to choose
+        """
         super(MealPlanningEnv, self).__init__()
 
         self.possible_meals = possible_meals
@@ -339,6 +475,15 @@ class MealPlanningEnv(gym.Env):
             coef_overall_entropy=0,
             coef_carbon=0
         ):
+        """
+        Set the reward weights for the environment
+        :param coef_nutrition_lower: (float) coefficient for nutrition lower bound
+        :param coef_nutrition_upper: (float) coefficient for nutrition upper bound
+        :param coef_sequence_entropy: (float) coefficient for sequence entropy
+        :param coef_repetitions: (float) coefficient for repetitions
+        :param coef_overall_entropy: (float) coefficient for overall entropy
+        :param coef_carbon: (float) coefficient for carbon
+        """
         self.reward_weights = dict(
             coef_nutrition_lower=coef_nutrition_lower,
             coef_nutrition_upper=coef_nutrition_upper,
@@ -377,6 +522,11 @@ class MealPlanningEnv(gym.Env):
         return self.nutrition_history[0:self.current_step, :].sum(axis=0)
 
     def reset(self):
+        """
+        Implementation of reset function
+        Puts the environment back in its initial state
+        :return: (np.array) observation
+        """
         self.current_step = 0
         # set all meals to the 'empty' meal
         self.meal_history = (np.zeros(self.num_meals) + self.num_possible_meals - 1).astype(int)
@@ -390,6 +540,13 @@ class MealPlanningEnv(gym.Env):
         return self._next_observation()
 
     def step(self, action):
+        """
+        Implementation of step function
+        Takes an action and returns the next observation, reward, done and info
+
+        :param action: (int) index of the meal to be chosen
+        :return: (np.array) observation, (float) reward, (bool) done, (dict) info
+        """
         chosen_meal = self.possible_meals[action]
         chosen_meal_category = self.meal_categories[action]
         nutrition = self.nutrition_data.loc[chosen_meal].values
@@ -409,6 +566,12 @@ class MealPlanningEnv(gym.Env):
         return self._next_observation(), reward, done, info
 
     def render(self, mode='human', close=False):
+        """
+        Render the environment to the screen
+        :param mode: (str) the mode to render with
+        :param close: (bool) close all open renderings
+        :return:
+        """
         if mode == 'human':
             print(f'Step: {self.current_step}')
             print(f'Chosen Meal: {self.possible_meals[self.meal_history[self.current_step - 1].astype(int)]}')
@@ -421,6 +584,10 @@ class MealPlanningEnv(gym.Env):
             pass
 
     def _next_observation(self):
+        """
+        Get the observation
+        :return: (np.array) observation
+        """
         obs = {
             'meal_history': self.meal_history,
             'nutrition_history': self.nutrition_history,
@@ -432,6 +599,15 @@ class MealPlanningEnv(gym.Env):
         return obs
 
     def _calculate_reward(self):
+        """
+        Default reward function
+        Specifies the heuristic for the reward function
+        Performs a linear combination of lower and upper nutrition scores,
+        with a penalty for carbon impact, and a bonus for compositional diversity 
+        (based on various entropy measures)
+
+        :return: (float) reward
+        """
         # take current percentage of nutrition met, treating each category equally, on [0, 1] scale
         
         # reaches 1 when at minimum nutrition
@@ -490,57 +666,55 @@ class MealPlanningEnv(gym.Env):
         return reward
     
 class MaxNutritionEnv(MealPlanningEnv):
+    """
+    Maximize nutrition score environment
+    """
     def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
         super(MaxNutritionEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
 
     def _calculate_reward(self):
+        """
+        Replace default reward function with one that maximizes nutrition score
+        """
         current_nutrition = self._calculate_current_nutrition()
         reward = current_nutrition.sum()
         return reward
 
 class HeuristicEnv(MealPlanningEnv):
+    """
+    The default environment, with a heuristic reward function
+    """
     def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
         super(HeuristicEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
     
 class GPTOnlyEnv(MealPlanningEnv):
+    """
+    The 'RLHF' environment, with a "human" reward function (which queries GPT)
+    """
     def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
         super(GPTOnlyEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
-        # Accrue meal text for prompting
-        self.meal_text_history = ""
 
         with open('gpt_key.txt', 'r') as file:
             openai.api_key = file.read().rstrip()
 
         # store previous responses in sqlite database to avoid re-prompting
         # try to load from database, otherwise create new
-        self.sql_conn = sqlite3.connect('response_store.db')
-        self.sql_conn.execute('CREATE TABLE IF NOT EXISTS response_store (meal text, response text)')
+        self.sql_conn = sqlite3.connect('gpt_responses.db')
+        self.sql_conn.execute('CREATE TABLE IF NOT EXISTS gpt_responses (meals text, response text)')
         self.sql_conn.commit()
 
-    def reset(self):
-        self.current_step = 0
-        # set all meals to the 'empty' meal
-        self.meal_history = np.zeros(self.num_meals) + self.num_possible_meals - 1
-        self.nutrition_history = np.zeros(self.nutrition_history_shape)
-        self.meal_text_history = ""
-        self.goal_nutrition = self._get_goal_nutrition()
-        return self._next_observation()
-
     def add_response(self, meal, response, verbose=False):
-        # add response to dataframe using concat
-        # self.response_df = pd.concat([self.response_df, pd.DataFrame({'meal': [meal], 'response': [response]})])
-
         # add response to sqlite database
         try:
-            self.sql_conn.execute(f'INSERT INTO response_store VALUES ("{meal}", "{response}")')
+            self.sql_conn.execute(f'INSERT INTO gpt_responses VALUES ("{meal}", "{response}")')
             self.sql_conn.commit()
         except:
             if verbose:
                 print('Error adding response to database')
 
-    def retrieve_response(self, meal, verbose=False):
+    def retrieve_response(self, meals, verbose=False):
         # retrieve response from response_store database
-        cursor = self.sql_conn.execute(f'SELECT response FROM response_store WHERE meal="{meal}"')
+        cursor = self.sql_conn.execute(f'SELECT response FROM gpt_responses WHERE meals="{meals}"')
         response = cursor.fetchone()
         if response is not None:
             if verbose:
@@ -551,15 +725,7 @@ class GPTOnlyEnv(MealPlanningEnv):
 
     def get_prompt(self, prompt_type):
         prompt_types = {
-            'Lucas_per_meal': 'I am a 6ft tall 25 year old male, 168 pounds. I am very active.\
-                Please rate the following proposed meal on a scale of 1-10, where\
-                    1 is an unhealthy or unnatural meal and 10 is a perfect, balanced healthy meal.\n',
-            'Lucas_full': f'I am a 6ft tall 25 year old male, 168 pounds. I am very active.\
-                Please rate the following proposed meal plan over a period of {self.num_meals} meals on a scale of 1-10, where\
-                    1 is an unhealthy plan and 10 is a perfect, balanced healthy plan, taking into account the given nutritional information.\n',
-            'Carbon_impact': 'Please rate the following proposed meal on a scale of -10 to 10, where\
-                    -10 is a meal with a very high carbon impact and 10 is a meal with a very low carbon impact,\
-                    and 0 is a meal with a neutral carbon impact.\n',
+            'Lucas': 'I am a 6ft tall 25 year old male, 168 pounds. I am very active. Please rate the following proposed meal plan on a scale of 1-10, where 1 is an unhealthy or unnatural meal plan and 10 is a perfect, balanced healthy meal plan:\n',
         }  
         return prompt_types[prompt_type]
 
@@ -569,8 +735,8 @@ class GPTOnlyEnv(MealPlanningEnv):
             nutrition_string += key + ': ' + str(nutrition[key]) + ', '
         return nutrition_string
 
-    def meal_to_string(self, meal):
-        return meal.name.replace('S ', '') + ' (' + self.nutrition_to_string(meal.nutrition) + ')'
+    def meal_expanded_string(self, meal):
+        return meal.replace('S ', '') + ' (' + self.nutrition_to_string(dict(self.nutrition_data.loc[meal])) + ')'
 
     def parse_meal_rating(self, response):
         # try to find a number in the response
@@ -587,19 +753,41 @@ class GPTOnlyEnv(MealPlanningEnv):
             
         return int(num)
     
-    def meal_reward_from_chatgpt(self, chosen_meal, chosen_meal_string, verbose=False, person_type='Lucas_per_meal', save_response=True):
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    def meal_reward_from_chatgpt(self, verbose=False, person_type='Lucas_per_meal', save_response=True):
         """
         Given a proposed meal, get a reward from the chatgpt model.
-        """
-        # print(chosen_meal_string)
-        prompt = self.get_prompt(person_type)
-        for meal_type, meal_value in chosen_meal_string.items():
-            prompt += f'{meal_type}: {meal_value}\n'
-        prompt += 'Please explain your answer, but end with a single numeric rating.'
 
+        NOTE: we retry this function up to 6 times, with exponential backoff, to avoid
+        OpenAI API errors.
+
+        Parameters
+        ----------
+        verbose : bool
+            Whether to print out the prompt and response
+        person_type : str
+            The type of person to query the model as
+        save_response : bool
+            Whether to save the response to the database
+
+        Returns
+        -------
+        reward : float
+            The reward from chatgpt
+
+        """
+        store_key = str(self.meal_history.astype(int))
+        meal_history_strings = self.possible_meals[self.meal_history.astype(int)]
+        prompt = self.get_prompt(person_type)
+        for i in range(self.current_step):
+            prompt += f'Meal {i}: ' + self.meal_expanded_string(meal_history_strings[i]) + '\n'
+        prompt += 'Please begin by phrasing your numeric answer as: "The meal plan is a X out of 10" and then explaining your rating.\n'
+        if verbose:
+            print(prompt)
         # check if we've checked this meal before,
         # if so, retrieve the response (no need to requery)
-        response = self.retrieve_response(chosen_meal)
+        chosen_meal = self.possible_meals[self.current_step-1]
+        response = self.retrieve_response(store_key)
         if response is not None:
             if verbose:
                 print(response)
@@ -616,32 +804,21 @@ class GPTOnlyEnv(MealPlanningEnv):
             )
             response = resp['choices'][0]['message']['content']
             if save_response:
-                self.add_response(chosen_meal, response)
-                # self.save_response_df()
+                self.add_response(store_key, response)
             if verbose:
                 print(response)
         return self.parse_meal_rating(response)
-    
-    def _calculate_reward(self, chosen_meal, done=False):
-        ## TODO: Replace with GPT Warmup
-        ## ALSO, prompt for carbon impact of meals as well
-        ## ALSO, add long term reward
-        try:
-            if not done:
-                self.full_text_history = self.meal_text_history + self.meal_to_string(self.meal_objects[chosen_meal]) + '\n\n'
-                meal_reward = self.meal_reward_from_chatgpt(chosen_meal, {'meal': self.meal_to_string(self.meal_objects[chosen_meal])}, verbose=False, person_type='Lucas_per_meal')
-                return float(meal_reward)
-            else:
-                full_plan_reward = self.meal_reward_from_chatgpt(chosen_meal, {'meal': self.meal_to_string(self.meal_objects[chosen_meal])}, verbose=False, person_type='Lucas_full')
-                return float(full_plan_reward)
-        except:
-            return 0.0
-        
-class RLHFEnv(GPTOnlyEnv):
-    def __init__(self, possible_meals, meal_categories, nutrition_data, carbon_data, num_meals):
-        super(RLHFEnv, self).__init__(possible_meals, meal_categories, nutrition_data, carbon_data, num_meals)
 
-    
-    def _calculate_reward(self, chosen_meal, done=False):
-        # TODO: add human input here.
-        raise NotImplementedError
+    def _calculate_reward(self):
+        """
+        Wrapper function to calculate the reward for the current meal plan.
+        Calls meal_reward_from_chatgpt() to get the reward from chatgpt.
+        """
+        meal_reward = self.meal_reward_from_chatgpt(verbose=False, person_type='Lucas') / 10
+        carbon_impact = np.mean(self.carbon_history) / 10
+
+        reward = float(
+            meal_reward + 
+            self.reward_weights['coef_carbon'] * carbon_impact
+        ) / self.num_meals
+        return reward

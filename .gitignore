@@ -3,3 +3,4 @@ dietkit_clone
 gpt_key.txt
 tmp/*
 tmp_me
+__pycache__
