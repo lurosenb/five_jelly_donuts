@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 import matplotlib.pyplot as plt
+from dietkit import load_ingredient, load_menu
 
 import re
 from math import log, e
@@ -32,6 +33,27 @@ def entropy_of_sequence(input_list):
     entropy = stats.entropy(count_data)  
     
     return entropy
+
+
+def load_data():
+    # load possible_meals, meal_categories, nutrition_data
+    all_ingredients = load_ingredient(sample_language = 'eng')
+    meal_dict = load_menu(ingredients = all_ingredients, sample_language = 'eng')
+
+    possible_meals = np.array(list(meal_dict.keys()))
+    meal_categories = np.array([meal.category if isinstance(meal.category, str) else meal.category[0] for meal in meal_dict.values()])
+    nutrition_data = pd.DataFrame([meal.nutrition for meal in meal_dict.values()], index=possible_meals)
+    
+    # load carbon_data
+    sql_conn = sqlite3.connect('carbon_impacts.db')
+    carbon_impacts_df = pd.read_sql_query("SELECT * FROM carbon_impacts", sql_conn)
+    carbon_impacts_df['meal'] = carbon_impacts_df['meal'].str.replace('Menu object: ', '')
+    # replace single outlier carbon impact manually with corrected value to restrict between -10 and 10
+    # print(carbon_impacts_df[carbon_impacts_df.impact > 10]['explanation'].values)
+    carbon_impacts_df.loc[carbon_impacts_df.impact > 10, 'impact'] = 2
+    carbon_data = dict(zip(carbon_impacts_df.meal, carbon_impacts_df.impact))
+    
+    return possible_meals, meal_categories, nutrition_data, carbon_data
 
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
@@ -92,9 +114,10 @@ def meal_sample(model, env):
     env.render()
     print(f'Epsiode reward: {episode_reward}')
     
-def min_reward_meal_sample(model, env, min_reward):
+def min_reward_meal_sample(model, env, min_reward, give_up_after=1000):
     episode_reward = 0
-    while episode_reward < min_reward:
+    attempts = 0
+    while episode_reward < min_reward and attempts < give_up_after:
         obs = env.reset()
         done, state = False, None
         episode_reward = 0
@@ -102,6 +125,7 @@ def min_reward_meal_sample(model, env, min_reward):
             action, state = model.predict(obs, state=state, deterministic=False)
             obs, reward, done, _ = env.step(action)
             episode_reward += reward
+        attempts += 1
     env.render()
     print(f'Epsiode reward: {episode_reward}')
 
@@ -306,10 +330,10 @@ class MealPlanningEnv(gym.Env):
             self, 
             coef_nutrition_lower=1,
             coef_nutrition_upper=-1,
-            coef_sequence_entropy=1,
-            coef_repetitions=-1,
-            coef_overall_entropy=1,
-            coef_carbon=1
+            coef_sequence_entropy=0,
+            coef_repetitions=0,
+            coef_overall_entropy=0,
+            coef_carbon=0
         ):
         self.reward_weights = dict(
             coef_nutrition_lower=coef_nutrition_lower,
@@ -438,7 +462,7 @@ class MealPlanningEnv(gym.Env):
         # otherwise fraction of total possible # repetitions
         sequential_counts = [(meal, len(list(appearances))) for meal, appearances in groupby(self.meal_history)]
         max_num_allowed_in_a_row = 1
-        total_num_repetitions = np.sum([appearances > max_num_allowed_in_a_row for _, appearances in sequential_counts])
+        total_num_repetitions = np.sum([appearances - max_num_allowed_in_a_row for _, appearances in sequential_counts])
         reptition_penalty = total_num_repetitions / self.num_meals
         
         # 3. Check entropy of meals overall as fraction of max possible, on [0, 1] scale
