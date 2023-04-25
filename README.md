@@ -16,6 +16,9 @@ Meal planning/dietary monitoring is a fundamental problem in models for personal
 - `random_agent.ipynb` / `testing_random_agent.ipynb`: Notebooks with miscellaneous tests and including tests for RandomAgentEnv for HeuristicEnv.
 - `test_gpt_only_env_algorithms.ipynb`: Notebook including tests for GPTEnv with RL "H" F reward function that queries ChatGPT for reward for a meal plan at any time step and then uses that as the reward + carbon impact.
 
+#### Disclaimer
+Notebooks include lots of plots and output. See slides for overview of results.
+
 ## Databases
 - `gpt_responses.db`: sqlite3 database containing the responses from ChatGPT for each food item. The table is called `gpt_responses` and has the columns `meals` and `responses`. `meals` has the unique ids for each meal composing a meal plan and response has the chatGPT response for that mealplan.
 - `carbon_impacts.db`: sqlite3 database containing the carbon impacts for each meal item. The table is called `carbon_impacts` and has the columns `meal` and `carbon_impact`.
