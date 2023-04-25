@@ -7,6 +7,38 @@ Meal planning/dietary monitoring is a fundamental problem in models for personal
 ## Main Files
 - `meal_planning_environment.py`: Main file with functionality. Contains the environment classes for the meal planning problem. Specifies subclasses for each of the particular reward types/environments we try (MaxNutritionEnv, HeuristicEnv, GPTEnv). Contains most of our plotting code and other helper functions as well. 
 
+## Usage
+
+Our meal planning environment is ready for use with gym as-is, and can be used as follows.
+
+```{python}
+from stable_baselines3 import PPO, DQN, A2C
+from meal_planning_environment import HeuristicEnv, MaxNutritionEnv, HeuristicEnv, GPTOnlyEnv
+from meal_planning_environment import run_with_learning_algorithm, load_data
+
+# load data on meals, nutrition, and carbon impact using our data loader
+possible_meals, meal_categories, nutrition_data, carbon_data = load_data()
+
+# set a number of desired meals for the meal plan and instantiate the environment
+# environment options include `MaxNutritionEnv`, `HeuristicEnv`, and `GPTOnlyEnv`
+num_meals = 21
+env = HeuristicEnv(
+    possible_meals=possible_meals, 
+    meal_categories=meal_categories, 
+    nutrition_data=nutrition_data, 
+    carbon_data=carbon_data, 
+    num_meals=num_meals
+)
+
+# note that for the heuristic environment, the reward function can be modified via the `set_reward_weights()` method!
+env.set_reward_weights(coef_nutrition_lower=1, coef_nutrition_upper=-0.5, coef_sequence_entropy=2, coef_repetitions=-2, coef_overall_entropy=2, coef_carbon=1)
+
+
+# run with your favorite agent using our handy function `run_with_learning_algorithm()` helper function. See notebooks for additional functionality.
+log_dir = 'path/to/log/directory'
+run_with_learning_algorithm(algorithm=PPO, env=env, num_timesteps=1000, log_dir=log_dir, num_meals=21, seed=0)
+```
+
 ## Notebooks
 - `carbon_impacts.ipynb`: Notebook including tests for HeuristicEnv with just carbon impact and nutrition targets as the reward function.
 - `generate_carbon_impacts.ipynb`: Notebook for calculating the carbon impact for each food item by querying ChatGPT 3 times with all of the ingredients in the food item. The carbon impact is the average of the 3 responses.
