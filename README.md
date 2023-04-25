@@ -12,7 +12,7 @@ Meal planning/dietary monitoring is a fundamental problem in models for personal
 Our meal planning environment is ready for use with gym as-is, and can be used as follows.
 
 ```{python}
-from stable_baselines3 import PPO, DQN, A2C
+from stable_baselines3 import PPO
 from meal_planning_environment import HeuristicEnv, MaxNutritionEnv, HeuristicEnv, GPTOnlyEnv
 from meal_planning_environment import run_with_learning_algorithm, load_data
 
